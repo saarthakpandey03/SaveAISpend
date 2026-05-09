@@ -20,6 +20,13 @@ export async function GET(
       );
     }
 
+    if (!supabase) {
+      return NextResponse.json(
+        { error: "Report backend not configured" },
+        { status: 503 }
+      );
+    }
+
     // Fetch report from Supabase
     const { data, error } = await supabase
       .from("audits")

@@ -14,10 +14,12 @@ export default function ResultsPage() {
     totalSavings: number;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   useEffect(() => {
     // Get results from localStorage
     if (typeof window !== "undefined") {
+      setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
       const auditData = localStorage.getItem("auditData");
       if (auditData) {
         try {
@@ -83,6 +85,11 @@ export default function ResultsPage() {
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-12 md:py-20">
         <div className="mx-auto max-w-4xl">
           <div className="mb-12">
+            {isDemoMode && (
+              <div className="mb-4 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-muted-foreground">
+                Running in demo mode
+              </div>
+            )}
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3">
               Your AI Spend Audit Results
             </h1>

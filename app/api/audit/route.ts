@@ -38,6 +38,16 @@ export async function POST(request: NextRequest) {
     // Generate unique report ID
     const reportId = `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+    // Graceful fallback mode for demo deployments without Supabase
+    if (!supabase) {
+      return NextResponse.json({
+        success: true,
+        fallbackMode: true,
+        message: "Demo mode active",
+        data: body,
+      });
+    }
+
     // Insert into Supabase
     const { data, error } = await supabase
       .from("audits")

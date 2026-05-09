@@ -12,10 +12,12 @@ export default function ResultsPage() {
   const router = useRouter();
   const [auditResult, setAuditResult] = useState<FullAuditResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   useEffect(() => {
     // Get results from localStorage using new audit engine
     if (typeof window !== "undefined") {
+      setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
       const stored = localStorage.getItem("auditData");
       if (stored) {
         try {
@@ -87,6 +89,11 @@ export default function ResultsPage() {
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8 md:py-16">
         <div className="mx-auto max-w-4xl">
           <div className="mb-8 md:mb-12">
+            {isDemoMode && (
+              <div className="mb-4 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-muted-foreground">
+                Running in demo mode
+              </div>
+            )}
             <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3 text-balance">
               Your AI Spend Audit Results
             </h1>

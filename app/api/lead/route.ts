@@ -47,6 +47,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Graceful fallback mode for demo deployments without Supabase
+    if (!supabase) {
+      return NextResponse.json({
+        success: true,
+        fallbackMode: true,
+        message: "Demo mode active",
+        data: {
+          auditId: body.auditId,
+          email: body.email.toLowerCase(),
+          companyName: body.companyName || null,
+          role: body.role || null,
+          teamSize: body.teamSize || null,
+        },
+      });
+    }
+
     // Insert into Supabase
     const { data, error } = await supabase
       .from("leads")

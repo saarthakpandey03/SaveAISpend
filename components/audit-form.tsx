@@ -159,6 +159,7 @@ export function AuditForm() {
 
       // Also keep legacy format for results page compatibility
       if (typeof window !== "undefined") {
+        localStorage.removeItem("stackspend_demo_mode");
         localStorage.setItem(
           "auditData",
           JSON.stringify({
@@ -169,6 +170,40 @@ export function AuditForm() {
           })
         );
         console.log("[v0] Legacy auditData saved to localStorage");
+      }
+
+      // Persist remotely when backend is configured; gracefully fall back in demo mode.
+      try {
+        const response = await fetch("/api/audit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            teamSize: teamProfile.size,
+            teamType: teamProfile.teamType,
+            primaryUseCase: teamProfile.useCase,
+            tools: normalizedTools,
+            currentMonthlySpend: auditResult.currentMonthlySpend,
+            optimizedMonthlySpend: auditResult.optimizedMonthlySpend,
+            monthlySavings: auditResult.monthlySavings,
+            annualSavings: auditResult.annualSavings,
+            savingsRate: auditResult.savingsRate,
+            summary: auditResult.summary,
+            recommendations: auditResult.recommendations,
+            isPublic: false,
+          }),
+        });
+
+        const payload = (await response.json()) as { fallbackMode?: boolean };
+        if (typeof window !== "undefined" && payload.fallbackMode) {
+          localStorage.setItem("stackspend_demo_mode", "true");
+        }
+      } catch (apiError) {
+        console.warn("[v0] Audit API unavailable, continuing in local demo mode:", apiError);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("stackspend_demo_mode", "true");
+        }
       }
 
       console.log("[v0] All saves complete, routing to /results with auditId:", auditId);
