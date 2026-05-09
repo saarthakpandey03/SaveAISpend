@@ -8,7 +8,7 @@ import { Footer } from "@/components/footer";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, TrendingDown, Share2, ArrowRight } from "lucide-react";
-import { Audit } from "@/lib/supabase";
+import type { Audit } from "@/lib/supabase-types";
 
 /**
  * SHAREABLE REPORT PAGE
@@ -46,7 +46,9 @@ export default function ReportPage() {
         }
 
         if (!response.ok) {
-          throw new Error("Failed to fetch report");
+          setError("Failed to fetch report");
+          setIsLoading(false);
+          return;
         }
 
         const data = await response.json();
