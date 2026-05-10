@@ -5,42 +5,39 @@ import { useRouter } from "next/navigation";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ResultsDisplay } from "@/components/results-display";
-import { loadAuditResult } from "@/lib/report-storage";
-import { FullAuditResult } from "@/lib/types";
+import type { AuditResult, TeamProfile, ToolEntry } from "@/lib/audit-data";
+import { resolveLatestAuditFromStorage } from "@/lib/resolve-stored-audit";
 
 export default function ResultsPage() {
   const router = useRouter();
-  const [auditResult, setAuditResult] = useState<FullAuditResult | null>(null);
+  const [displayResults, setDisplayResults] = useState<AuditResult[]>([]);
+  const [teamProfile, setTeamProfile] = useState<TeamProfile | null>(null);
+  const [tools, setTools] = useState<ToolEntry[]>([]);
+  const [totalSavings, setTotalSavings] = useState(0);
+  const [currentSpendAnnual, setCurrentSpendAnnual] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   useEffect(() => {
-    // Get results from localStorage using new audit engine
-    if (typeof window !== "undefined") {
-      setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
-      const stored = localStorage.getItem("auditData");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          
-          // Try to load full audit result using auditId
-          if (parsed.auditId) {
-            const result = loadAuditResult(parsed.auditId);
-            if (result) {
-              setAuditResult(result);
-              setIsLoading(false);
-              return;
-            }
-          }
-          
-          // Fallback: Show "no audit data" state
-          setAuditResult(null);
-        } catch (error) {
-          console.error("Error parsing audit data:", error);
-          setAuditResult(null);
-        }
-      }
+    if (typeof window === "undefined") return;
+
+    setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
+
+    const resolved = resolveLatestAuditFromStorage();
+    if (resolved) {
+      const { full, tools: t, displayResults: rows } = resolved;
+      setDisplayResults(rows);
+      setTeamProfile({
+        size: full.teamProfile.size,
+        useCase: full.teamProfile.useCase,
+        teamType: full.teamProfile.teamType,
+        painPoint: full.teamProfile.painPoint,
+      });
+      setTools(t);
+      setTotalSavings(full.annualSavings);
+      setCurrentSpendAnnual(full.currentMonthlySpend * 12);
     }
+
     setIsLoading(false);
   }, []);
 
@@ -58,7 +55,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (!auditResult) {
+  if (!teamProfile || displayResults.length === 0) {
     return (
       <div className="flex flex-col min-h-screen bg-background">
         <Header />
@@ -103,11 +100,11 @@ export default function ResultsPage() {
           </div>
 
           <ResultsDisplay
-            results={auditResult.recommendations}
-            totalSavings={auditResult.annualSavings}
-            teamProfile={auditResult.teamProfile}
-            tools={[]}
-            currentSpend={auditResult.currentMonthlySpend * 12}
+            results={displayResults}
+            totalSavings={totalSavings}
+            teamProfile={teamProfile}
+            tools={tools}
+            currentSpend={currentSpendAnnual}
           />
         </div>
       </main>

@@ -29,7 +29,12 @@ export function ResultsDisplay({
   const monthlySavings = totalSavings / 12;
   const monthlySpend = currentSpend / 12;
   const optimizedMonthly = optimizedSpend / 12;
-  const savingsRate = ((totalSavings / currentSpend) * 100).toFixed(1);
+  const savingsRate =
+    currentSpend > 0 ? ((totalSavings / currentSpend) * 100).toFixed(1) : "0.0";
+  const optimizedBarPct =
+    monthlySpend > 0
+      ? Math.min(100, Math.max(0, (optimizedMonthly / monthlySpend) * 100))
+      : 0;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(reportUrl);
@@ -114,7 +119,7 @@ export function ResultsDisplay({
             <div className="h-3 bg-muted rounded-full overflow-hidden">
               <div
                 className="h-full bg-green-500 rounded-full"
-                style={{ width: `${((optimizedMonthly / monthlySpend) * 100).toFixed(0)}%` }}
+                style={{ width: `${optimizedBarPct.toFixed(0)}%` }}
               />
             </div>
           </div>
@@ -212,8 +217,9 @@ export function ResultsDisplay({
                   <div className="flex gap-2 items-start">
                     <Zap className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
                     <div className="text-sm text-muted-foreground">
-                      Reduce to {Math.max(1, (entry?.seats || 1) - 1)} seat{Math.max(1, (entry?.seats || 1) - 1) > 1 ? "s" : ""} — seat
-                      count appears high relative to team profile and likely active usage.
+                      {result.recommendations?.length
+                        ? result.recommendations.join(" ")
+                        : `Review seats (${entry?.seats ?? 1}) vs active usage for ${teamProfile.size}-person team.`}
                     </div>
                   </div>
                 </div>

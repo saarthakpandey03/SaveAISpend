@@ -36,20 +36,22 @@ export function generateAudit(input: AuditInput): FullAuditResult {
   const auditId = input.id || generateAuditId();
   const timestamp = input.timestamp || new Date().toISOString();
 
-  // Analyze each tool individually
+  // Analyze each tool individually (every known tool keeps a row for UI + totals)
   const recommendations: ToolRecommendation[] = input.tools
     .map((tool) => analyzeToolUsage(tool, input.teamProfile))
     .filter((rec): rec is ToolRecommendation => rec !== null);
 
-  // Calculate financial metrics
-  const currentMonthlySpend = recommendations.reduce(
-    (sum, rec) => sum + rec.currentMonthlyCost,
-    0
-  );
-  const optimizedMonthlySpend = recommendations.reduce(
+  const inputMonthlySpend = input.tools.reduce((sum, t) => sum + t.monthlySpend, 0);
+  const currentMonthlySpend = inputMonthlySpend;
+  const optimizedFromRows = recommendations.reduce(
     (sum, rec) => sum + rec.optimizedMonthlyCost,
     0
   );
+  const modeledToolIds = new Set(recommendations.map((r) => r.toolId));
+  const orphanMonthlySpend = input.tools
+    .filter((t) => !modeledToolIds.has(t.toolId))
+    .reduce((sum, t) => sum + t.monthlySpend, 0);
+  const optimizedMonthlySpend = optimizedFromRows + orphanMonthlySpend;
   const monthlySavings = currentMonthlySpend - optimizedMonthlySpend;
   const annualSavings = monthlySavings * 12;
   const savingsRate = currentMonthlySpend > 0 ? monthlySavings / currentMonthlySpend : 0;
@@ -121,7 +123,23 @@ function analyzeToolUsage(
     teamProfile
   );
 
-  if (!recommendation) return null;
+  if (!recommendation) {
+    return {
+      toolId: tool.toolId,
+      toolName,
+      currentPlan: tool.plan as ToolPlan,
+      currentMonthlyCost: tool.monthlySpend,
+      recommendedPlan: null,
+      optimizedMonthlyCost: tool.monthlySpend,
+      monthlySavings: 0,
+      annualSavings: 0,
+      savingsPercentage: 0,
+      confidence: "low",
+      reason:
+        "No automatic optimization matched this plan for your team profile—your setup may already be reasonable.",
+      actions: ["Revisit after usage grows or vendors change pricing"],
+    };
+  }
 
   const { recommendedPlan, reason, actions, confidence } = recommendation;
 
@@ -397,7 +415,8 @@ function getOverallConfidence(
 
   const highConfidenceCount = recommendations.filter((r) => r.confidence === "high")
     .length;
-  const highConfidenceRatio = highConfidenceCount / recommendations.length;
+  const highConfidenceRatio =
+    recommendations.length > 0 ? highConfidenceCount / recommendations.length : 0;
 
   if (highConfidenceRatio >= 0.7 && savingsPercentage >= 15) {
     return "high";

@@ -166,6 +166,7 @@ export function AuditForm() {
             teamProfile,
             tools: normalizedTools,
             auditId,
+            auditResult,
             timestamp: new Date().toISOString(),
           })
         );

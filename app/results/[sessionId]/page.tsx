@@ -5,34 +5,39 @@ import { useRouter } from "next/navigation";
 import { Header } from "@/components/header";
 import { Footer } from "@/components/footer";
 import { ResultsDisplay } from "@/components/results-display";
-import { AuditResult } from "@/lib/audit-data";
+import type { AuditResult, TeamProfile, ToolEntry } from "@/lib/audit-data";
+import { resolveLatestAuditFromStorage } from "@/lib/resolve-stored-audit";
 
-export default function ResultsPage() {
+export default function ResultsSessionPage() {
   const router = useRouter();
-  const [results, setResults] = useState<{
-    results: AuditResult[];
-    totalSavings: number;
-  } | null>(null);
+  const [displayResults, setDisplayResults] = useState<AuditResult[]>([]);
+  const [teamProfile, setTeamProfile] = useState<TeamProfile | null>(null);
+  const [tools, setTools] = useState<ToolEntry[]>([]);
+  const [totalSavings, setTotalSavings] = useState(0);
+  const [currentSpendAnnual, setCurrentSpendAnnual] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   useEffect(() => {
-    // Get results from localStorage
-    if (typeof window !== "undefined") {
-      setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
-      const auditData = localStorage.getItem("auditData");
-      if (auditData) {
-        try {
-          const parsed = JSON.parse(auditData);
-          setResults({
-            results: parsed.results,
-            totalSavings: parsed.totalSavings,
-          });
-        } catch (error) {
-          console.error("Error parsing audit data:", error);
-        }
-      }
+    if (typeof window === "undefined") return;
+
+    setIsDemoMode(localStorage.getItem("stackspend_demo_mode") === "true");
+
+    const resolved = resolveLatestAuditFromStorage();
+    if (resolved) {
+      const { full, tools: t, displayResults: rows } = resolved;
+      setDisplayResults(rows);
+      setTeamProfile({
+        size: full.teamProfile.size,
+        useCase: full.teamProfile.useCase,
+        teamType: full.teamProfile.teamType,
+        painPoint: full.teamProfile.painPoint,
+      });
+      setTools(t);
+      setTotalSavings(full.annualSavings);
+      setCurrentSpendAnnual(full.currentMonthlySpend * 12);
     }
+
     setIsLoading(false);
   }, []);
 
@@ -52,7 +57,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (!results) {
+  if (!teamProfile || displayResults.length === 0) {
     return (
       <div className="flex flex-col min-h-screen bg-background">
         <Header />
@@ -99,8 +104,11 @@ export default function ResultsPage() {
           </div>
 
           <ResultsDisplay
-            results={results.results}
-            totalSavings={results.totalSavings}
+            results={displayResults}
+            totalSavings={totalSavings}
+            teamProfile={teamProfile}
+            tools={tools}
+            currentSpend={currentSpendAnnual}
           />
         </div>
       </main>
