@@ -78,10 +78,28 @@ export interface AuditInput {
 // AUDIT RESULT TYPES
 // ============================================================================
 
+export type PricingDiscrepancy =
+  | "above_retail"
+  | "at_retail"
+  | "below_retail"
+  | "usage_based"
+  | "custom_pricing"
+  | "unknown";
+
 export interface ToolRecommendation {
   toolId: ToolName;
   toolName: string;
   currentPlan: ToolPlan;
+  /** Monthly spend the user reported (invoice / estimate) */
+  userReportedMonthly: number;
+  /** Monthly total at official public list price for selected plan × seats */
+  officialRetailMonthly: number;
+  pricingDiscrepancy: PricingDiscrepancy;
+  /** User reported minus official retail (positive = paying above list) */
+  reportingDeltaVsRetailMonthly: number;
+  /** Monthly savings if paying list: retail minus optimized */
+  savingsVsRetailMonthly: number;
+  /** @deprecated use userReportedMonthly — kept for backwards compatibility */
   currentMonthlyCost: number;
   recommendedPlan: ToolPlan | null; // null if already optimized
   optimizedMonthlyCost: number;
@@ -100,11 +118,15 @@ export interface FullAuditResult {
   
   // Financial summary
   currentMonthlySpend: number;
+  /** Sum of official list-price totals for selected plans (per pricing-data) */
+  retailBaselineMonthlySpend: number;
   optimizedMonthlySpend: number;
   monthlySavings: number;
   annualSavings: number;
   savingsPercentage: number;
   savingsRate: number; // 0-1, e.g., 0.15 = 15% savings
+  /** Potential monthly savings vs list: retail baseline − optimized (floor at 0) */
+  monthlySavingsVsRetailBaseline: number;
   
   // Recommendations
   recommendations: ToolRecommendation[];

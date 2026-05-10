@@ -14,12 +14,46 @@
 import {
   AuditInput,
   FullAuditResult,
+  PricingDiscrepancy,
   ToolRecommendation,
   ToolName,
   ToolPlan,
   TeamProfile,
 } from "./types";
-import { toolsPricing, getToolPrice, getSeatAssumption } from "./pricing-data";
+import {
+  toolsPricing,
+  getOfficialRetailMonthly,
+  type OfficialRetailMode,
+} from "./pricing-data";
+
+const RETAIL_TOLERANCE_RATIO = 0.06;
+const RETAIL_TOLERANCE_MIN = 1;
+
+function classifyPricingDiscrepancy(
+  userMonthly: number,
+  retailTotalMonthly: number,
+  mode: OfficialRetailMode
+): PricingDiscrepancy {
+  if (mode === "usage_based") return "usage_based";
+  if (mode === "custom_pricing") return "custom_pricing";
+  if (mode === "unknown") return "unknown";
+  if (retailTotalMonthly <= 0) return "unknown";
+  const tol = Math.max(RETAIL_TOLERANCE_MIN, retailTotalMonthly * RETAIL_TOLERANCE_RATIO);
+  const d = userMonthly - retailTotalMonthly;
+  if (Math.abs(d) <= tol) return "at_retail";
+  if (d > tol) return "above_retail";
+  return "below_retail";
+}
+
+type ToolRuleResult = {
+  recommendedPlan: ToolPlan | null;
+  optimizedSeats?: number;
+  /** When list pricing does not apply (e.g. API vs subscription substitute) */
+  optimizedMonthlyHint?: number;
+  reason: string;
+  actions: string[];
+  confidence: "high" | "moderate" | "low";
+};
 
 // ============================================================================
 // AUDIT ENGINE MAIN FUNCTION
@@ -52,9 +86,18 @@ export function generateAudit(input: AuditInput): FullAuditResult {
     .filter((t) => !modeledToolIds.has(t.toolId))
     .reduce((sum, t) => sum + t.monthlySpend, 0);
   const optimizedMonthlySpend = optimizedFromRows + orphanMonthlySpend;
-  const monthlySavings = currentMonthlySpend - optimizedMonthlySpend;
+  const retailBaselineMonthlySpend = recommendations.reduce(
+    (sum, r) => sum + r.officialRetailMonthly,
+    0
+  );
+  const monthlySavingsVsRetailBaseline = Math.max(
+    0,
+    retailBaselineMonthlySpend - optimizedMonthlySpend
+  );
+  const monthlySavings = Math.max(0, currentMonthlySpend - optimizedMonthlySpend);
   const annualSavings = monthlySavings * 12;
-  const savingsRate = currentMonthlySpend > 0 ? monthlySavings / currentMonthlySpend : 0;
+  const savingsRate =
+    currentMonthlySpend > 0 ? monthlySavings / currentMonthlySpend : 0;
   const savingsPercentage = Math.round(savingsRate * 100);
 
   // Determine optimization state and confidence
@@ -80,11 +123,13 @@ export function generateAudit(input: AuditInput): FullAuditResult {
     timestamp,
     teamProfile: input.teamProfile,
     currentMonthlySpend,
+    retailBaselineMonthlySpend,
     optimizedMonthlySpend,
     monthlySavings,
     annualSavings,
     savingsPercentage,
     savingsRate,
+    monthlySavingsVsRetailBaseline,
     recommendations,
     summary,
     overallConfidence,
@@ -112,59 +157,130 @@ function analyzeToolUsage(
   const toolInfo = toolsPricing[tool.toolId];
   if (!toolInfo) return null;
 
-  const currentCost = tool.monthlySpend * 12;
   const toolName = toolInfo.name;
+  const userReportedMonthly = tool.monthlySpend;
 
-  // Get optimization recommendation based on tool-specific rules
+  const selectedRetail = getOfficialRetailMonthly(
+    tool.toolId,
+    String(tool.plan),
+    tool.seats
+  );
+  const officialRetailMonthly = selectedRetail.totalMonthly;
+  const pricingDiscrepancy = classifyPricingDiscrepancy(
+    userReportedMonthly,
+    officialRetailMonthly,
+    selectedRetail.mode
+  );
+  const reportingDeltaVsRetailMonthly =
+    userReportedMonthly - officialRetailMonthly;
+
   const recommendation = getToolRecommendation(
     tool.toolId,
     tool.plan as ToolPlan,
     tool.seats,
-    teamProfile
+    teamProfile,
+    userReportedMonthly
   );
 
+  const augmentReason = (base: string) => {
+    if (selectedRetail.mode !== "per_seat_list") return base;
+    if (pricingDiscrepancy === "above_retail") {
+      return `${base} Your reported spend is above standard public list pricing (~$${officialRetailMonthly}/mo for this plan × ${tool.seats} seat(s)). Check invoices, add-ons, or unused seats.`;
+    }
+    if (pricingDiscrepancy === "below_retail") {
+      return `${base} Your reported spend is below public list pricing (~$${officialRetailMonthly}/mo)—you may have discounts or credits; optimization may hinge on usage.`;
+    }
+    return base;
+  };
+
   if (!recommendation) {
+    const savingsVsRetailMonthly = Math.max(
+      0,
+      officialRetailMonthly - userReportedMonthly
+    );
+    let reason = augmentReason(
+      "No automatic plan change matched—compare your entry to public list pricing in /lib/pricing-data."
+    );
+    if (pricingDiscrepancy === "usage_based") {
+      reason =
+        "Usage-based/API billing has no single list total; benchmark against subscriptions and your actual usage.";
+    }
+
     return {
       toolId: tool.toolId,
       toolName,
       currentPlan: tool.plan as ToolPlan,
-      currentMonthlyCost: tool.monthlySpend,
+      userReportedMonthly,
+      officialRetailMonthly,
+      pricingDiscrepancy,
+      reportingDeltaVsRetailMonthly,
+      savingsVsRetailMonthly,
+      currentMonthlyCost: userReportedMonthly,
       recommendedPlan: null,
-      optimizedMonthlyCost: tool.monthlySpend,
+      optimizedMonthlyCost: userReportedMonthly,
       monthlySavings: 0,
       annualSavings: 0,
       savingsPercentage: 0,
       confidence: "low",
-      reason:
-        "No automatic optimization matched this plan for your team profile—your setup may already be reasonable.",
+      reason,
       actions: ["Revisit after usage grows or vendors change pricing"],
     };
   }
 
-  const { recommendedPlan, reason, actions, confidence } = recommendation;
+  const {
+    recommendedPlan,
+    optimizedSeats,
+    optimizedMonthlyHint,
+    reason,
+    actions,
+    confidence,
+  } = recommendation;
 
-  // Calculate optimized cost
-  const optimizedCost = recommendedPlan
-    ? (getToolPrice(tool.toolId, recommendedPlan) || tool.monthlySpend) * 12
-    : currentCost;
+  let optimizedMonthlyCost: number;
+  if (optimizedMonthlyHint != null) {
+    optimizedMonthlyCost = optimizedMonthlyHint;
+  } else {
+    const optPlanStr = String(recommendedPlan ?? tool.plan);
+    const seatsForOpt = optimizedSeats ?? tool.seats;
+    const optRetail = getOfficialRetailMonthly(
+      tool.toolId,
+      optPlanStr,
+      seatsForOpt
+    );
+    optimizedMonthlyCost = optRetail.totalMonthly;
+    if (recommendedPlan === "free") {
+      optimizedMonthlyCost = 0;
+    }
+  }
 
-  const monthlySavings = (currentCost - optimizedCost) / 12;
-  const annualSavings = currentCost - optimizedCost;
+  const monthlySavings = Math.max(0, userReportedMonthly - optimizedMonthlyCost);
+  const annualSavings = monthlySavings * 12;
+  const userAnnual = userReportedMonthly * 12;
   const savingsPercentage =
-    currentCost > 0 ? Math.round((annualSavings / currentCost) * 100) : 0;
+    userAnnual > 0 ? Math.round((annualSavings / userAnnual) * 100) : 0;
+
+  const savingsVsRetailMonthly = Math.max(
+    0,
+    officialRetailMonthly - optimizedMonthlyCost
+  );
 
   return {
     toolId: tool.toolId,
     toolName,
     currentPlan: tool.plan as ToolPlan,
-    currentMonthlyCost: tool.monthlySpend,
+    userReportedMonthly,
+    officialRetailMonthly,
+    pricingDiscrepancy,
+    reportingDeltaVsRetailMonthly,
+    savingsVsRetailMonthly,
+    currentMonthlyCost: userReportedMonthly,
     recommendedPlan,
-    optimizedMonthlyCost: optimizedCost / 12,
+    optimizedMonthlyCost,
     monthlySavings,
     annualSavings,
     savingsPercentage,
     confidence,
-    reason,
+    reason: augmentReason(reason),
     actions,
   };
 }
@@ -183,167 +299,135 @@ function getToolRecommendation(
   toolId: ToolName,
   currentPlan: ToolPlan,
   seats: number,
-  teamProfile: TeamProfile
-): {
-  recommendedPlan: ToolPlan | null;
-  reason: string;
-  actions: string[];
-  confidence: "high" | "moderate" | "low";
-} | null {
+  teamProfile: TeamProfile,
+  userMonthlySpend: number
+): ToolRuleResult | null {
   // CURSOR RULES
   if (toolId === "cursor") {
-    // Rule: Small teams with Business plan should use Pro
     if (teamProfile.size <= 5 && currentPlan === "business") {
       return {
         recommendedPlan: "pro",
-        reason: `Teams under 5 people rarely need Cursor Business ($40/mo). Pro ($20/mo) offers sufficient features.`,
+        optimizedSeats: seats,
+        reason: `Teams under 5 people rarely need Cursor Business (list $40/seat/mo). Pro (list $20/seat/mo) often suffices.`,
         actions: [
-          "Downgrade to Pro plan",
-          `Save $${(40 - 20) * seats}/month`,
-          "Verify team doesn't need business features (SSO, admin controls)",
+          "Downgrade to Pro plan at list pricing",
+          `At public rates: save ~$${(40 - 20) * seats}/month vs Business × seats`,
+          "Verify you don't need Business-only controls",
         ],
         confidence: "high",
       };
     }
-    // Rule: If team can only support 60% of current seats, reduce seats
     const expectedSeats = Math.ceil(teamProfile.size * 0.6);
     if (seats > expectedSeats) {
       return {
         recommendedPlan: currentPlan,
-        reason: `Your ${teamProfile.size}-person team likely has ~${expectedSeats} active Cursor users. Excess ${seats - expectedSeats} seats may be unused.`,
+        optimizedSeats: expectedSeats,
+        reason: `Your ${teamProfile.size}-person team likely has ~${expectedSeats} active Cursor users at typical adoption. Extra seats inflate spend vs list price × needed seats.`,
         actions: [
           `Reduce from ${seats} to ${expectedSeats} seats`,
-          `Save $${(seats - expectedSeats) * (currentPlan === "pro" ? 20 : 40)}/month`,
-          "Review actual usage in Cursor analytics",
+          "Review usage in vendor analytics",
         ],
         confidence: "moderate",
       };
     }
   }
 
-  // GITHUB COPILOT RULES
   if (toolId === "github-copilot") {
-    // Rule: Small teams with Business should use Individual
     if (teamProfile.size <= 3 && currentPlan === "business") {
       return {
         recommendedPlan: "individual",
-        reason: `Teams of 3 or fewer rarely need Business tier ($19/mo). Individual ($10/mo) is usually sufficient.`,
+        optimizedSeats: seats,
+        reason: `Small groups rarely need Copilot Business (list $19/seat/mo). Individual (list $10/seat/mo) is often enough.`,
         actions: [
-          "Switch to Individual plan",
-          `Save $${(19 - 10) * seats}/month`,
-          "Verify you don't need business features (admin controls, audit logs)",
+          "Switch to Individual at public list pricing",
+          `Illustrative savings ~$${(19 - 10) * seats}/month at list rates`,
         ],
         confidence: "high",
       };
     }
-    // Rule: Seat reduction if overprovided
     if (seats > teamProfile.size) {
+      const targetSeats = Math.ceil(teamProfile.size * 0.65);
       return {
         recommendedPlan: currentPlan,
-        reason: `You have ${seats} seats for a ${teamProfile.size}-person team. Typical activation is 50-70% of team size.`,
-        actions: [
-          `Reduce to ${Math.ceil(teamProfile.size * 0.65)} seats`,
-          `Save $${(seats - Math.ceil(teamProfile.size * 0.65)) * 10}/month`,
-        ],
+        optimizedSeats: targetSeats,
+        reason: `${seats} seats for a ${teamProfile.size}-person team is often more than active usage.`,
+        actions: [`Target ~${targetSeats} seats based on typical activation`],
         confidence: "moderate",
       };
     }
   }
 
-  // CLAUDE RULES
   if (toolId === "claude") {
-    // Rule: Large teams with Pro should use Team
     if (teamProfile.size >= 5 && currentPlan === "pro" && seats >= 3) {
       return {
         recommendedPlan: "team",
-        reason: `For ${seats} active users, Claude Team ($30/mo shared) is more economical than individual Pro plans ($20 each).`,
+        optimizedSeats: 1,
+        reason: `Multiple Pro seats (list $20/seat) can exceed one Team workspace (list pricing in catalog)—compare totals vs your invoice.`,
         actions: [
-          "Migrate from individual Pro to Team plan",
-          `Save $${seats * 20 - 30}/month (~${seats - 1.5} people worth of savings)`,
-          "Share single Team subscription across team",
+          "Compare consolidated Team vs individual Pro at public rates",
+          "Validate seat model against your Anthropic contract",
         ],
         confidence: "high",
-      };
-    }
-    // Rule: If Max plan but writing-focused, downgrade to Pro
-    if (currentPlan === "max" && teamProfile.useCase === "writing") {
-      return {
-        recommendedPlan: "pro",
-        reason: `Claude Max excels at complex reasoning. For writing tasks, Pro usually sufficient.`,
-        actions: ["Downgrade to Pro plan", "Keep Max for edge cases only", "Save $5-10/month"],
-        confidence: "moderate",
       };
     }
   }
 
-  // CHATGPT RULES
   if (toolId === "chatgpt") {
-    // Rule: Small teams with Team should use Plus
     if (teamProfile.size <= 2 && currentPlan === "team") {
+      const plusSeats = Math.max(1, Math.min(teamProfile.size, seats));
       return {
         recommendedPlan: "plus",
-        reason: `Team plan ($25) is overkill for 1-2 people. Plus ($20) offers same GPT-4 access with less overhead.`,
+        optimizedSeats: plusSeats,
+        reason: `For very small teams, Team (list $30/seat/mo in our catalog) may exceed Plus (list $20/seat) needs.`,
         actions: [
-          "Switch to ChatGPT Plus",
-          `Save $${(25 - 20) * seats}/month`,
-          "Plus includes all GPT-4 features you need",
+          "Compare Plus vs Team using public list prices × seats you need",
+          `If ${plusSeats} paid seat(s) suffice, Plus is often cheaper at list rates`,
         ],
         confidence: "high",
       };
     }
-    // Rule: Large teams on Plus should use Team
     if (teamProfile.size >= 8 && currentPlan === "plus" && seats >= 4) {
       return {
         recommendedPlan: "team",
-        reason: `With ${seats} Plus subscriptions, Team plan ($25/mo shared) becomes cheaper at scale.`,
+        optimizedSeats: 1,
+        reason: `Many individual Plus seats (list $20 each) can exceed a Team rollout—compare at list pricing for your org.`,
         actions: [
-          "Migrate from Plus to Team",
-          `Save $${seats * 20 - 25}/month`,
-          "Team includes shared usage pool and admin controls",
+          "Model Team plan list price vs sum of Plus seats",
+          "Confirm shared workspace fits governance needs",
         ],
         confidence: "high",
       };
     }
   }
 
-  // GEMINI RULES
   if (toolId === "gemini") {
-    // Rule: If on paid plan with low usage, use free tier with occasional upgrades
     if (currentPlan === "pro" && teamProfile.size <= 2) {
       return {
         recommendedPlan: "free",
-        reason: `Small teams can use Gemini Free tier for most work, upgrade only when needed.`,
-        actions: [
-          "Switch to Free tier",
-          `Save $20/month`,
-          "Use paid tiers only for edge cases",
-        ],
+        optimizedSeats: 1,
+        reason: `Small teams may run on Gemini Free and upgrade only when limits bite (list Pro is $20/seat in catalog).`,
+        actions: ["Try Free tier", "Upgrade only when usage requires"],
         confidence: "moderate",
       };
     }
   }
 
-  // API RULES
   if (toolId === "openai-api" || toolId === "anthropic-api") {
-    // Rule: If monthly spend is low, consider subscription model
-    const monthlySpend = (toolId === "openai-api" ? 0 : 0); // Handled by monthlySpend in input
-    if (monthlySpend < 40 && monthlySpend > 0) {
-      // Comparison with paid plans makes sense
-      const subPlan = toolId === "openai-api" ? "ChatGPT Plus" : "Claude Pro";
+    if (userMonthlySpend > 0 && userMonthlySpend < 40) {
+      const cap = 20;
       return {
         recommendedPlan: null,
-        reason: `Your API spend (${monthlySpend}/month) is low. Consider if ChatGPT Plus ($20) or Claude Pro ($20) would be more economical.`,
+        optimizedMonthlyHint: Math.min(userMonthlySpend, cap),
+        reason: `Your reported API spend ($${userMonthlySpend}/mo) is in a range where a ~$${cap}/mo subscription list price might beat light API usage—depends on tokens.`,
         actions: [
-          `Evaluate total token usage vs. subscription cost`,
-          `May save $${Math.max(20 - monthlySpend, 0)}/month by switching`,
-          "Reconsider if API is the best fit for your use case",
+          "Compare last month’s API bill to ChatGPT Plus / Claude Pro list pricing",
+          "Heavy API users may still prefer usage-based billing",
         ],
         confidence: "low",
       };
     }
   }
 
-  // DEFAULT: No recommendation needed
   return null;
 }
 
@@ -360,27 +444,41 @@ function generateAuditSummary(
   savingsPercentage: number,
   optimizationState: string
 ): string {
-  if (optimizationState === "optimized") {
-    return `Your ${teamProfile.size}-person ${teamProfile.teamType} team's AI stack is well optimized. All tools are on appropriate plans for your size and use case. We'll notify you if new savings opportunities emerge.`;
+  const aboveRetail = recommendations.filter(
+    (r) => r.pricingDiscrepancy === "above_retail"
+  );
+  const belowRetail = recommendations.filter(
+    (r) => r.pricingDiscrepancy === "below_retail"
+  );
+
+  if (optimizationState === "optimized" && aboveRetail.length === 0) {
+    return `Your ${teamProfile.size}-person ${teamProfile.teamType} team: against public list prices in our catalog, reported spends look aligned with typical retail or lower. Few automated plan moves apply; we’ll flag new pricing changes as vendors update.`;
   }
 
   const toolsWithSavings = recommendations.filter((r) => r.monthlySavings > 0);
 
+  const retailNote =
+    aboveRetail.length > 0
+      ? ` ${aboveRetail.length} line(s) show reported spend above standard public list pricing—investigate billing, add-ons, or seat counts.`
+      : belowRetail.length > 0
+        ? ` Some lines are below public list pricing (discounts/credits possible)—savings vs list may be limited until usage is validated.`
+        : "";
+
   if (savingsPercentage >= 30) {
-    return `Your ${teamProfile.size}-person team is overspending significantly. We identified ${toolsWithSavings.length} tool${toolsWithSavings.length !== 1 ? "s" : ""} where you can reduce costs by ~${savingsPercentage}%. Primary opportunities: ${toolsWithSavings
+    return `Against vendor list pricing in our dataset, your ${teamProfile.size}-person team could reduce reported spend by ~${savingsPercentage}% before optimization. Hot spots: ${toolsWithSavings
       .slice(0, 2)
       .map((r) => r.toolName)
-      .join(" and ")}. Most recommendations involve plan downgrades or seat reductions.`;
+      .join(", ")}. ${retailNote.trim()}`;
   }
 
   if (savingsPercentage >= 15) {
-    return `Your team has moderate optimization potential. ${toolsWithSavings.length} tool${toolsWithSavings.length !== 1 ? "s" : ""} offer savings opportunities totaling ~${savingsPercentage}%. Key areas: ${toolsWithSavings
+    return `Moderate upside: ~${savingsPercentage}% vs your stated bills, using public plan prices as the benchmark. Review: ${toolsWithSavings
       .slice(0, 2)
       .map((r) => `${r.toolName} (${r.savingsPercentage}%)`)
-      .join(", ")}.`;
+      .join(", ")}.${retailNote}`;
   }
 
-  return `We found minor optimization opportunities in your AI stack. Small adjustments could save you ${savingsPercentage}% annually. Most recommendations are seat reductions or consolidation of similar tools.`;
+  return `We compared your entries to current public list prices (see methodology), then applied plan/seat rules. Indicated savings are ~${savingsPercentage}% of your reported spend; validate invoices and usage.${retailNote}`;
 }
 
 // ============================================================================
@@ -408,6 +506,10 @@ function getOverallConfidence(
   teamProfile: TeamProfile,
   savingsPercentage: number
 ): "high" | "moderate" | "low" {
+  if (recommendations.length === 0) {
+    return "low";
+  }
+
   // High confidence if:
   // - Most recommendations are high confidence
   // - Team profile is clear

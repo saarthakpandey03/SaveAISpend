@@ -11,7 +11,10 @@ interface ResultsDisplayProps {
   totalSavings: number;
   teamProfile: TeamProfile;
   tools: ToolEntry[];
+  /** Annual — sum of user-reported tool spend */
   currentSpend: number;
+  /** Annual — sum of public list-price totals for selected plans × seats */
+  retailBaselineAnnual?: number;
 }
 
 export function ResultsDisplay({
@@ -20,6 +23,7 @@ export function ResultsDisplay({
   teamProfile,
   tools,
   currentSpend,
+  retailBaselineAnnual,
 }: ResultsDisplayProps) {
   const [copied, setCopied] = useState(false);
   const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
@@ -28,6 +32,8 @@ export function ResultsDisplay({
   const optimizedSpend = currentSpend - totalSavings;
   const monthlySavings = totalSavings / 12;
   const monthlySpend = currentSpend / 12;
+  const monthlyRetail =
+    retailBaselineAnnual != null ? retailBaselineAnnual / 12 : null;
   const optimizedMonthly = optimizedSpend / 12;
   const savingsRate =
     currentSpend > 0 ? ((totalSavings / currentSpend) * 100).toFixed(1) : "0.0";
@@ -73,47 +79,77 @@ export function ResultsDisplay({
 
       {/* Hero Metrics Section */}
       <Card className="bg-gradient-to-br from-accent/30 via-card to-card border-accent/40 p-8 md:p-12">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-8">
           <div>
-            <p className="text-muted-foreground text-sm mb-1">Monthly Overspend</p>
+            <p className="text-muted-foreground text-sm mb-1">Reported spend</p>
             <p className="text-2xl md:text-3xl font-bold text-foreground">
-              ${monthlySavings.toFixed(0)}
+              ${monthlySpend.toFixed(0)}<span className="text-lg font-normal text-muted-foreground">/mo</span>
             </p>
           </div>
+          {monthlyRetail != null && (
+            <div>
+              <p className="text-muted-foreground text-sm mb-1">Retail baseline (list)</p>
+              <p className="text-2xl md:text-3xl font-bold text-foreground">
+                ${monthlyRetail.toFixed(0)}<span className="text-lg font-normal text-muted-foreground">/mo</span>
+              </p>
+            </div>
+          )}
           <div>
-            <p className="text-muted-foreground text-sm mb-1">Annual Waste</p>
+            <p className="text-muted-foreground text-sm mb-1">Optimized spend</p>
             <p className="text-2xl md:text-3xl font-bold text-green-400">
-              ${totalSavings.toLocaleString()}
+              ${optimizedMonthly.toFixed(0)}<span className="text-lg font-normal text-muted-foreground">/mo</span>
             </p>
           </div>
           <div>
-            <p className="text-muted-foreground text-sm mb-1">Savings Rate</p>
+            <p className="text-muted-foreground text-sm mb-1">Potential savings</p>
             <p className="text-2xl md:text-3xl font-bold text-accent">
+              ${monthlySavings.toFixed(0)}<span className="text-lg font-normal text-muted-foreground">/mo</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-sm mb-1">Savings rate</p>
+            <p className="text-2xl md:text-3xl font-bold text-foreground">
               {savingsRate}%
             </p>
           </div>
-          <div>
-            <p className="text-muted-foreground text-sm mb-1">Opportunity</p>
-            <p className="text-2xl md:text-3xl font-bold text-foreground">
-              {results.length} tools
-            </p>
-          </div>
         </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Based on current public vendor list pricing in our catalog (not your invoice). Verify against contracts, regional pricing, taxes, and add-ons.
+        </p>
+        <p className="text-sm text-muted-foreground mb-8">
+          Annualized potential vs reported spend: <span className="text-foreground font-medium">${totalSavings.toLocaleString()}/yr</span>
+        </p>
 
         {/* Before/After Spend Bar */}
         <div className="space-y-3">
           <div>
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-foreground font-medium">Current Spend</span>
+              <span className="text-foreground font-medium">Reported spend</span>
               <span className="text-muted-foreground">${monthlySpend.toFixed(0)}/mo</span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
               <div className="h-full bg-red-500/60 rounded-full" style={{ width: "100%" }} />
             </div>
           </div>
+          {monthlyRetail != null && (
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-foreground font-medium">Retail baseline (list)</span>
+                <span className="text-muted-foreground">${monthlyRetail.toFixed(0)}/mo</span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-amber-500/50 rounded-full"
+                  style={{
+                    width: `${monthlySpend > 0 ? Math.min(100, (monthlyRetail / monthlySpend) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
           <div>
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-foreground font-medium">Optimized Spend</span>
+              <span className="text-foreground font-medium">Optimized spend</span>
               <span className="text-green-400">${optimizedMonthly.toFixed(0)}/mo</span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
@@ -182,6 +218,28 @@ export function ResultsDisplay({
                     <p className="text-sm text-muted-foreground">
                       {entry?.plan} • {entry?.seats} seat{(entry?.seats || 1) > 1 ? "s" : ""}
                     </p>
+                    {(result.userReportedMonthly != null ||
+                      result.officialRetailMonthly != null) && (
+                      <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                        Reported{" "}
+                        {result.userReportedMonthly != null
+                          ? `$${result.userReportedMonthly}/mo`
+                          : "—"}
+                        {result.officialRetailMonthly != null &&
+                          ` · List ~$${result.officialRetailMonthly}/mo`}
+                        {result.optimizedMonthly != null &&
+                          ` · Target ~$${result.optimizedMonthly.toFixed(0)}/mo`}
+                        {result.pricingDiscrepancy === "above_retail" && (
+                          <span className="text-amber-400"> · Above public list</span>
+                        )}
+                        {result.pricingDiscrepancy === "below_retail" && (
+                          <span className="text-sky-400"> · Below list — verify billing</span>
+                        )}
+                        {result.pricingDiscrepancy === "usage_based" && (
+                          <span> · Usage-based (no single list total)</span>
+                        )}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className={`text-sm font-medium mb-2 ${confidence.color}`}>

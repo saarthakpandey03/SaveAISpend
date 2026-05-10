@@ -77,7 +77,6 @@ export const toolsPricing: Record<string, ToolPricing> = {
       business: {
         name: "Business",
         monthly: 19,
-        monthly: 19,
         description: "Enterprise-grade, admin controls, audit logs",
       },
       enterprise: {
@@ -144,8 +143,8 @@ export const toolsPricing: Record<string, ToolPricing> = {
       },
       team: {
         name: "Team",
-        monthly: 25,
-        description: "Multi-user, shared usage, admin controls",
+        monthly: 30,
+        description: "Per-seat team plan, shared workspace (public list pricing)",
         maxUsers: 25,
       },
       enterprise: {
@@ -182,6 +181,11 @@ export const toolsPricing: Record<string, ToolPricing> = {
         name: "Ultra",
         monthly: 0,
         description: "Highest capability model",
+      },
+      advanced: {
+        name: "Advanced",
+        monthly: 20,
+        description: "Google AI Pro–class access (aligned with public Gemini paid tiers)",
       },
       "api-free": {
         name: "API (Free)",
@@ -309,4 +313,61 @@ export function isValidToolPlan(toolId: string, planId: string): boolean {
  */
 export function getAllToolIds(): string[] {
   return Object.keys(toolsPricing);
+}
+
+/** How official list price maps to a monthly total for the selected plan + seats */
+export type OfficialRetailMode =
+  | "per_seat_list"
+  | "usage_based"
+  | "custom_pricing"
+  | "unknown";
+
+/**
+ * Official retail monthly total = list price per seat × seat count for catalog subscription plans.
+ * Usage-based / custom / unlisted plans return mode ≠ per_seat_list (no apple-to-apple list total).
+ */
+export function getOfficialRetailMonthly(
+  toolId: string,
+  planId: string,
+  seats: number
+): {
+  totalMonthly: number;
+  perSeatMonthly: number;
+  mode: OfficialRetailMode;
+} {
+  const tool = toolsPricing[toolId];
+  if (!tool) {
+    return { totalMonthly: 0, perSeatMonthly: 0, mode: "unknown" };
+  }
+
+  const plan = tool.plans[planId];
+  if (!plan) {
+    return { totalMonthly: 0, perSeatMonthly: 0, mode: "unknown" };
+  }
+
+  const perSeat = plan.monthly;
+  const seatCount = Math.max(1, Math.floor(seats));
+
+  const isUsagePlan =
+    toolId === "openai-api" ||
+    toolId === "anthropic-api" ||
+    planId === "pay-as-you-go" ||
+    planId === "pay-as-you-go-gpt4-turbo" ||
+    planId === "api-pay-as-you-go" ||
+    planId === "api-free" ||
+    planId === "api-paid";
+
+  if (perSeat === 0 && isUsagePlan) {
+    return { totalMonthly: 0, perSeatMonthly: 0, mode: "usage_based" };
+  }
+
+  if (perSeat === 0) {
+    return { totalMonthly: 0, perSeatMonthly: 0, mode: "custom_pricing" };
+  }
+
+  return {
+    totalMonthly: perSeat * seatCount,
+    perSeatMonthly: perSeat,
+    mode: "per_seat_list",
+  };
 }

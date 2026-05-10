@@ -27,6 +27,15 @@ export interface AuditResult {
   estimatedSavings: number;
   savingsPercentage: number;
   recommendations: string[];
+  /** Monthly — user-entered */
+  userReportedMonthly?: number;
+  /** Monthly — official list for plan × seats (pricing-data) */
+  officialRetailMonthly?: number;
+  /** Monthly — modeled optimized */
+  optimizedMonthly?: number;
+  pricingDiscrepancy?: string;
+  /** Annual — list-to-optimized wedge */
+  savingsVsRetailAnnual?: number;
 }
 
 export const aiTools: AITool[] = [

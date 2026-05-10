@@ -4,7 +4,8 @@
  */
 
 import { aiTools, type ToolEntry, type AuditResult } from "@/lib/audit-data";
-import type { FullAuditResult } from "@/lib/types";
+import { generateAudit } from "@/lib/audit-engine";
+import type { FullAuditResult, TeamProfile, ToolInput } from "@/lib/types";
 import { loadAuditResult } from "@/lib/report-storage";
 import { toolRecommendationsToAuditResults } from "@/lib/map-audit-display";
 
@@ -52,6 +53,23 @@ export function resolveLatestAuditFromStorage(): ResolvedStoredAudit | null {
     if (!full) return null;
 
     const tools = Array.isArray(parsed.tools) ? parsed.tools : [];
+
+    if (
+      typeof full.retailBaselineMonthlySpend !== "number" &&
+      tools.length > 0 &&
+      (parsed as { teamProfile?: TeamProfile }).teamProfile
+    ) {
+      try {
+        full = generateAudit({
+          id: full.auditId,
+          teamProfile: (parsed as { teamProfile: TeamProfile }).teamProfile,
+          tools: tools as ToolInput[],
+          timestamp: full.timestamp,
+        });
+      } catch {
+        /* keep loaded snapshot */
+      }
+    }
 
     let displayResults = toolRecommendationsToAuditResults(full.recommendations);
 

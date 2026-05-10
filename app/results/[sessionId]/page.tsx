@@ -15,6 +15,9 @@ export default function ResultsSessionPage() {
   const [tools, setTools] = useState<ToolEntry[]>([]);
   const [totalSavings, setTotalSavings] = useState(0);
   const [currentSpendAnnual, setCurrentSpendAnnual] = useState(0);
+  const [retailBaselineAnnual, setRetailBaselineAnnual] = useState<
+    number | undefined
+  >(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
 
@@ -36,6 +39,11 @@ export default function ResultsSessionPage() {
       setTools(t);
       setTotalSavings(full.annualSavings);
       setCurrentSpendAnnual(full.currentMonthlySpend * 12);
+      setRetailBaselineAnnual(
+        typeof full.retailBaselineMonthlySpend === "number"
+          ? full.retailBaselineMonthlySpend * 12
+          : undefined
+      );
     }
 
     setIsLoading(false);
@@ -109,6 +117,7 @@ export default function ResultsSessionPage() {
             teamProfile={teamProfile}
             tools={tools}
             currentSpend={currentSpendAnnual}
+            retailBaselineAnnual={retailBaselineAnnual}
           />
         </div>
       </main>
